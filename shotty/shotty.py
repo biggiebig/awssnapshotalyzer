@@ -14,6 +14,10 @@ def filter_instances(project):
         instances = ec2.instances.all()
     return instances
 
+def has_pending_snapshot(volume):
+    snapshots = list(volume.snapshots.all())
+    return snapshots and snapshots[0].state == "pending"
+
 @click.group()
 
 def cli():
@@ -99,6 +103,9 @@ def createsnapshot_instances(project):
         i.stop()
         i.wait_until_stopped()
         for v in i.volumes.all():
+            if has_pending_snapshot(v):
+                print("has pending snapshots{0}".format(v.id))
+                continue
             print("Creating snap shot for vID:{0}".format(v.id))
             v.create_snapshot(Description="Created By awssnapshotalyzer")
         print("Starting instance for snapshop :{0}".format(i.id))
