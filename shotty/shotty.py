@@ -1,0 +1,138 @@
+import boto3
+import click
+import botocore
+
+session = boto3.Session(profile_name='shotty')
+ec2 = session.resource('ec2')
+
+def filter_instances(project):
+    instances = []
+    if project:
+        filters = [{'Name':'tag:Project','Values':[project]}]
+        instances = ec2.instances.filter(Filters=filters)
+    else:
+        instances = ec2.instances.all()
+    return instances
+
+@click.group()
+
+def cli():
+    """Shotty Manages snapshots """
+
+@cli.group('snapshots')
+
+def snapshots():
+    """Commands for snapshots """
+
+@snapshots.command('list')
+@click.option('--project', default=None,
+    help="Only shows snapshots for Project (tag Project:<name>)")
+@click.option('--all','list_all', default=False , is_flag=True,
+ help = "List all snapshots for each volume not just the most recent")
+def list_snapshot(project, list_all):
+    instances = filter_instances(project)
+    for i in instances:
+        for v in i.volumes.all():
+            for s in v.snapshots.all():
+                print(', '.join((
+                s.id,
+                v.id,
+                i.id,
+                s.state,
+                s.progress,
+                s.start_time.strftime("%c")
+                )))
+                if s.state == 'completed' and not list_all: break
+    return
+
+@cli.group('volumes')
+
+def volumes():
+    """Commands for volumes """
+
+@volumes.command('list')
+@click.option('--project', default=None,
+    help="Only shows volumes for Project (tag Project:<name>)")
+def list_volumes(project):
+    instances = filter_instances(project)
+    for i in instances:
+        for v in i.volumes.all():
+            print(', '.join((
+            v.id,
+            i.id,
+            v.state,
+            str(v.size)+ ' Gib',
+            v.encrypted and "Encrypted" or "Not Encrypted")))
+    return
+
+
+@cli.group('instances')
+def instances():
+    """Commands for instances """
+
+@instances.command("list")
+@click.option('--project', default=None,
+    help="Only Instance for Project (tag Project:<name>)")
+def list_instances(project):
+    "List all EC2 instances"
+    instances = filter_instances(project)
+    for i in instances:
+        tags = { t['Key']: t['Value'] for t  in i.tags or [] }
+        print(', '.join((
+        i.id,
+        i.instance_type,
+        i.placement['AvailabilityZone'],
+        i.state["Name"],
+        i.public_dns_name,
+        tags.get('Project','<no project>')
+        )))
+    return
+
+@instances.command("createsnapshot")
+@click.option('--project', default=None,
+    help="Only Instance for Project (tag Project:<name>)")
+def createsnapshot_instances(project):
+    "createsnapshot all EC2 instances"
+    instances = filter_instances(project)
+    for i in instances:
+        print("Stopping instance for snapshop :{0}".format(i.id))
+        i.stop()
+        i.wait_until_stopped()
+        for v in i.volumes.all():
+            print("Creating snap shot for vID:{0}".format(v.id))
+            v.create_snapshot(Description="Created By awssnapshotalyzer")
+        print("Starting instance for snapshop :{0}".format(i.id))
+        i.start()
+        i.wait_until_running()
+    print("Job Done")
+    return
+
+@instances.command('stop')
+@click.option('--project', default=None,
+    help="Only Stop Instances for Project")
+def stop_instances(project):
+    "Stop instance for project"
+    instances = filter_instances(project)
+    for i in instances:
+        print('Stopping instanceID:{0}'.format(i.id))
+        try:
+            i.stop()
+        except botocore.exceptions.ClientError as e:
+            print("Could not stop instanceID {0}".format(i.id) + str(e))
+            continue
+    return
+
+@instances.command('start')
+@click.option('--project', default=None,
+    help="Only start Instance for Project")
+def start_instances(project):
+    "Stop instance for project"
+    instances = filter_instances(project)
+    for i in instances:
+        print('Starting instanceID:{0}'.format(i.id))
+        i.start()
+    return
+
+
+if __name__ == '__main__':
+    cli()
